@@ -135,6 +135,8 @@ func main() {
 	router := http.NewServeMux()
 
 	router.HandleFunc("POST /upload", uploadFile)
+	router.HandleFunc("GET /health", checkHealth)
+	router.HandleFunc("GET /err", errCheck)
 
 	server := http.Server{
 		Addr:    ":8080",

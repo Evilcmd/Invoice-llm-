@@ -20,7 +20,7 @@ func respondWithError(res http.ResponseWriter, statusCode int, message string) {
 	respondWithJson(res, statusCode, payload)
 }
 
-func checkHealth(res http.ResponseWriter, req *http.Request) {
+func checkHealth(res http.ResponseWriter, _ *http.Request) {
 	payload := struct {
 		Message string `json:"message"`
 	}{
@@ -29,6 +29,6 @@ func checkHealth(res http.ResponseWriter, req *http.Request) {
 	respondWithJson(res, 200, payload)
 }
 
-func errCheck(res http.ResponseWriter, req *http.Request) {
+func errCheck(res http.ResponseWriter, _ *http.Request) {
 	respondWithError(res, 400, "checking error response function")
 }
