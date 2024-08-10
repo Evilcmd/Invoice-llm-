@@ -2,146 +2,74 @@ package main
 
 import (
 	"context"
-	"encoding/json"
+	"database/sql"
 	"fmt"
-	"io"
 	"log"
 	"net/http"
 	"os"
-	"os/exec"
 
-	"github.com/google/generative-ai-go/genai"
+	"github.com/Evilcmd/Invoice-llm-/internal/database"
+	"github.com/google/uuid"
 	"github.com/joho/godotenv"
-	"google.golang.org/api/option"
+	_ "github.com/lib/pq"
+	"go.mongodb.org/mongo-driver/mongo"
+	"go.mongodb.org/mongo-driver/mongo/options"
 )
 
-func partToString(part genai.Part) (string, error) {
-	switch v := part.(type) {
-	case genai.Text:
-		return string(v), nil
-	default:
-		return "", fmt.Errorf("error in type")
-	}
-}
-
-type details struct {
-	CustomerDetails struct {
-		Name        string `json:"name"`
-		Address     string `json:"address"`
-		PhoneNumber string `json:"phone_number"`
-		Email       string `json:"email"`
-	} `json:"customer_details"`
-	ProductDetails []struct {
-		Name        string `json:"name"`
-		Rate        string `json:"rate"`
-		Quantity    string `json:"quantity"`
-		TotalAmount string `json:"total_amount"`
-	} `json:"product_details"`
-	TotalAmount   string `json:"total_amount"`
-	AmountPayable string `json:"amount_payable"`
-}
-
-func readPdfPromptLLM(fname string) (details, error) {
-
-	//Pdf
-	args := []string{
-		"-layout",
-		"-nopgbrk",
-		fname,
-		"-",
-	}
-	cmd := exec.Command("pdftotext", args...)
-	output, err := cmd.Output()
-	if err != nil {
-		return details{}, err
-	}
-
-	invoice := string(output)
-
-	// Gemini Config
-	ctx := context.Background()
-	godotenv.Load()
-	GeminiApiKey := os.Getenv("GEMINI_API_KEY")
-	client, err := genai.NewClient(ctx, option.WithAPIKey(GeminiApiKey))
-	if err != nil {
-		return details{}, err
-	}
-	defer client.Close()
-	model := client.GenerativeModel("gemini-1.5-flash")
-
-	// Prompt
-	resp, err := model.GenerateContent(ctx, genai.Text(invoice+"\nFrom the above invoice, return the customer_details(name, address, phone_number, email), array of product_details(name, rate, quantity, total_amount), total_amount and amount_payable in Json format if any of the fields mentioned doesnt exist then mention 0 in its place and give the numbers without commas and no need to mention it is json and dont add any backticks at the beginning and ending"))
-	if err != nil {
-		return details{}, err
-	}
-
-	response := resp.Candidates[0].Content.Parts[0]
-	invoiceData, err := partToString(response)
-	if err != nil {
-		return details{}, err
-	}
-
-	detailsobj := &details{}
-
-	err = json.Unmarshal([]byte(invoiceData), detailsobj)
-	if err != nil {
-		return details{}, err
-	}
-
-	return *detailsobj, nil
-}
-
-func uploadFile(res http.ResponseWriter, req *http.Request) {
-	req.ParseMultipartForm(10 << 20)
-	file, _, err := req.FormFile("myFile")
-	if err != nil {
-		respondWithError(res, http.StatusUnprocessableEntity, fmt.Sprintf("Error Retrieving the File: %v", err.Error()))
-		return
-	}
-	defer file.Close()
-
-	tempFile, err := os.CreateTemp("temp", "upload-*.pdf")
-
-	if err != nil {
-		respondWithError(res, http.StatusUnprocessableEntity, fmt.Sprintf("Error Creating temp file: %v", err.Error()))
-		return
-	}
-	defer tempFile.Close()
-
-	fileBytes, err := io.ReadAll(file)
-	if err != nil {
-		respondWithError(res, http.StatusUnprocessableEntity, fmt.Sprintf("Error reading the File: %v", err.Error()))
-		return
-	}
-
-	tempFile.Write(fileBytes)
-
-	invoice, err := readPdfPromptLLM(tempFile.Name())
-	if err != nil {
-		respondWithError(res, 406, fmt.Sprintf("error calling the function: %v", err.Error()))
-		return
-	}
-
-	respondWithJson(res, 200, invoice)
-
-	err = os.Remove(tempFile.Name())
-	if err != nil {
-		log.Println(err)
-	}
+type apiConfigDefn struct {
+	DB            *database.Queries
+	MongoDBCLient *mongo.Collection
+	jwtSecret     string
+	userID        uuid.UUID
 }
 
 func main() {
 
+	godotenv.Load()
+	dbURL := os.Getenv("DBURL")
+	db, err := sql.Open("postgres", dbURL)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	JWT_SECRET := os.Getenv("JWT_SECRET")
+
+	MongoUrl := os.Getenv("MONGOURL")
+	MongoClientDriver, err := mongo.Connect(context.TODO(), options.Client().ApplyURI(MongoUrl))
+	if err != nil {
+		log.Fatal("Mongo Connectin Failed", err.Error())
+	}
+	defer func() {
+		if err := MongoClientDriver.Disconnect(context.TODO()); err != nil {
+			log.Fatal("error disconnecting mongodb: ", err.Error())
+		}
+	}()
+
+	MongoClient := MongoClientDriver.Database("InvoiceLLM").Collection("InvoiceLLM")
+
+	dbQueries := database.New(db)
+	apiConfig := apiConfigDefn{dbQueries, MongoClient, JWT_SECRET, uuid.UUID{}}
+
 	router := http.NewServeMux()
 
-	router.HandleFunc("POST /upload", uploadFile)
+	router.HandleFunc("GET /", rootFunc)
+
 	router.HandleFunc("GET /health", checkHealth)
 	router.HandleFunc("GET /err", errCheck)
 
+	router.HandleFunc("POST /upload", uploadFile)
+
+	router.HandleFunc("POST /signup", apiConfig.signup)
+	router.HandleFunc("POST /login", apiConfig.login)
+
+	router.HandleFunc("POST /invoices", apiConfig.authenticate(apiConfig.saveInvoice))
+	router.HandleFunc("GET /invoices", apiConfig.authenticate(apiConfig.getAllInvoiceForUser))
+
 	server := http.Server{
 		Addr:    ":8080",
-		Handler: router}
-
+		Handler: router,
+	}
+	fmt.Println("Starting server on port 8080")
 	if err := server.ListenAndServe(); err != nil {
 		fmt.Println("Error starting server: ", err.Error())
 	}
