@@ -67,7 +67,7 @@ func main() {
 
 	server := http.Server{
 		Addr:    ":8080",
-		Handler: router,
+		Handler: corsMiddleware(router),
 	}
 	fmt.Println("Starting server on port 8080")
 	if err := server.ListenAndServe(); err != nil {

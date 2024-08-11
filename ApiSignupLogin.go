@@ -19,6 +19,10 @@ type userDefn struct {
 	Passwd string `json:"passwd"`
 }
 
+type jwtSend struct{
+	Token string `json:"token"`
+}
+
 func (apiConfig *apiConfigDefn) signup(res http.ResponseWriter, req *http.Request) {
 
 	user := userDefn{}
@@ -31,6 +35,11 @@ func (apiConfig *apiConfigDefn) signup(res http.ResponseWriter, req *http.Reques
 	err = json.Unmarshal(reqBody, &user)
 	if err != nil {
 		respondWithError(res, 406, fmt.Sprintf("error unmarshalling user login data: %v", err.Error()))
+		return
+	}
+
+	if user.Uname == "" || user.Passwd == ""{
+		respondWithError(res, 406, "did not get username or password")
 		return
 	}
 
@@ -52,7 +61,20 @@ func (apiConfig *apiConfigDefn) signup(res http.ResponseWriter, req *http.Reques
 		return
 	}
 
-	respondWithJson(res, 200, "success")
+	jwtToken := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.RegisteredClaims{
+		Issuer:    "InvoiceLLM",
+		IssuedAt:  jwt.NewNumericDate(time.Now()),
+		ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Hour * 24)),
+		Subject:   params.ID.String(),
+	})
+
+	signedJwtTokenString, err := jwtToken.SignedString([]byte(apiConfig.jwtSecret))
+	if err != nil {
+		respondWithError(res, 406, fmt.Sprintf("error signing the token: %v", err.Error()))
+		return
+	}
+
+	respondWithJson(res, 200, jwtSend{signedJwtTokenString})
 
 }
 
@@ -96,5 +118,5 @@ func (apiConfig *apiConfigDefn) login(res http.ResponseWriter, req *http.Request
 		return
 	}
 
-	respondWithJson(res, 200, signedJwtTokenString)
+	respondWithJson(res, 200, jwtSend{signedJwtTokenString})
 }
