@@ -6,7 +6,7 @@ import (
 	"strings"
 
 	"github.com/golang-jwt/jwt/v5"
-	"github.com/google/uuid"
+	"go.mongodb.org/mongo-driver/bson/primitive"
 )
 
 func (apiConfig *apiConfigDefn) authenticate(next http.HandlerFunc) http.HandlerFunc {
@@ -32,7 +32,7 @@ func (apiConfig *apiConfigDefn) authenticate(next http.HandlerFunc) http.Handler
 			return
 		}
 
-		userUUID, err := uuid.Parse(userid)
+		userUUID, err := primitive.ObjectIDFromHex(userid)
 		if err != nil {
 			respondWithError(res, http.StatusUnauthorized, fmt.Sprintf("Error parsing id from jwtToken: %v", err.Error()))
 			return
@@ -52,13 +52,12 @@ func corsMiddleware(next http.Handler) http.Handler {
 		w.Header().Set("Access-Control-Allow-Origin", "*") // Replace '*' with specific origins if needed
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
 		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
-		
+
 		if r.Method == "OPTIONS" {
 			w.WriteHeader(http.StatusNoContent)
 			return
 		}
-		
+
 		next.ServeHTTP(w, r)
 	})
 }
-

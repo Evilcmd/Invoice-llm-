@@ -2,35 +2,27 @@ package main
 
 import (
 	"context"
-	"database/sql"
 	"fmt"
 	"log"
 	"net/http"
 	"os"
 
-	"github.com/Evilcmd/Invoice-llm-/internal/database"
-	"github.com/google/uuid"
 	"github.com/joho/godotenv"
-	_ "github.com/lib/pq"
+	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
 )
 
 type apiConfigDefn struct {
-	DB            *database.Queries
-	MongoDBCLient *mongo.Collection
-	jwtSecret     string
-	userID        uuid.UUID
+	MongoDBUserCLient *mongo.Collection
+	MongoDBCLient     *mongo.Collection
+	jwtSecret         string
+	userID            primitive.ObjectID
 }
 
 func main() {
 
 	godotenv.Load()
-	dbURL := os.Getenv("DBURL")
-	db, err := sql.Open("postgres", dbURL)
-	if err != nil {
-		log.Fatal(err)
-	}
 
 	JWT_SECRET := os.Getenv("JWT_SECRET")
 
@@ -46,9 +38,9 @@ func main() {
 	}()
 
 	MongoClient := MongoClientDriver.Database("InvoiceLLM").Collection("InvoiceLLM")
+	MongoUserClient := MongoClientDriver.Database("InvoiceLLM").Collection("Users")
 
-	dbQueries := database.New(db)
-	apiConfig := apiConfigDefn{dbQueries, MongoClient, JWT_SECRET, uuid.UUID{}}
+	apiConfig := apiConfigDefn{MongoUserClient, MongoClient, JWT_SECRET, primitive.NilObjectID}
 
 	router := http.NewServeMux()
 

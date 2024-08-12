@@ -8,9 +8,10 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/Evilcmd/Invoice-llm-/internal/database"
 	"github.com/golang-jwt/jwt/v5"
-	"github.com/google/uuid"
+	"go.mongodb.org/mongo-driver/bson"
+	"go.mongodb.org/mongo-driver/bson/primitive"
+	"go.mongodb.org/mongo-driver/mongo"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -19,8 +20,14 @@ type userDefn struct {
 	Passwd string `json:"passwd"`
 }
 
-type jwtSend struct{
+type jwtSend struct {
 	Token string `json:"token"`
+}
+
+type User struct {
+	ID       primitive.ObjectID `bson:"_id,omitempty"`
+	Username string             `bson:"uname"`
+	Passwd   string             `bson:"passwd"`
 }
 
 func (apiConfig *apiConfigDefn) signup(res http.ResponseWriter, req *http.Request) {
@@ -28,7 +35,7 @@ func (apiConfig *apiConfigDefn) signup(res http.ResponseWriter, req *http.Reques
 	user := userDefn{}
 	reqBody, err := io.ReadAll(req.Body)
 	if err != nil {
-		respondWithError(res, 406, fmt.Sprintf("error io reading request bodu: %v", err.Error()))
+		respondWithError(res, 406, fmt.Sprintf("error io reading request body: %v", err.Error()))
 		return
 	}
 
@@ -38,8 +45,16 @@ func (apiConfig *apiConfigDefn) signup(res http.ResponseWriter, req *http.Reques
 		return
 	}
 
-	if user.Uname == "" || user.Passwd == ""{
+	if user.Uname == "" || user.Passwd == "" {
 		respondWithError(res, 406, "did not get username or password")
+		return
+	}
+
+	filter := bson.D{{Key: "uname", Value: user.Uname}}
+	userRet := apiConfig.MongoDBUserCLient.FindOne(context.TODO(), filter)
+	err = userRet.Err()
+	if err == nil || err != mongo.ErrNoDocuments {
+		respondWithError(res, 406, "Duplicate user or some other error:")
 		return
 	}
 
@@ -49,13 +64,13 @@ func (apiConfig *apiConfigDefn) signup(res http.ResponseWriter, req *http.Reques
 		return
 	}
 
-	params := database.CreateUserParams{
-		ID:       uuid.New(),
-		UserName: user.Uname,
+	params := User{
+		ID:       primitive.NewObjectID(),
+		Username: user.Uname,
 		Passwd:   string(hash),
 	}
 
-	err = apiConfig.DB.CreateUser(context.Background(), params)
+	_, err = apiConfig.MongoDBUserCLient.InsertOne(context.TODO(), params)
 	if err != nil {
 		respondWithError(res, 406, fmt.Sprintf("error creating user: %v", err.Error()))
 		return
@@ -65,7 +80,7 @@ func (apiConfig *apiConfigDefn) signup(res http.ResponseWriter, req *http.Reques
 		Issuer:    "InvoiceLLM",
 		IssuedAt:  jwt.NewNumericDate(time.Now()),
 		ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Hour * 24)),
-		Subject:   params.ID.String(),
+		Subject:   params.ID.Hex(),
 	})
 
 	signedJwtTokenString, err := jwtToken.SignedString([]byte(apiConfig.jwtSecret))
@@ -93,11 +108,20 @@ func (apiConfig *apiConfigDefn) login(res http.ResponseWriter, req *http.Request
 		return
 	}
 
-	userRetreived, err := apiConfig.DB.GetUserByUsername(context.Background(), user.Uname)
+	filter := bson.D{{Key: "uname", Value: user.Uname}}
+	userRet := apiConfig.MongoDBUserCLient.FindOne(context.TODO(), filter)
+	err = userRet.Err()
 	if err != nil {
-		respondWithError(res, 406, fmt.Sprintf("error fetching admin: %v", err.Error()))
+		if err == mongo.ErrNoDocuments {
+			respondWithError(res, 404, "user not found")
+			return
+		}
+		respondWithError(res, 500, fmt.Sprintf("error finding user: %v", err.Error()))
 		return
 	}
+
+	userRetreived := User{}
+	userRet.Decode(&userRetreived)
 
 	err = bcrypt.CompareHashAndPassword([]byte(userRetreived.Passwd), []byte(user.Passwd))
 	if err != nil {
@@ -109,7 +133,7 @@ func (apiConfig *apiConfigDefn) login(res http.ResponseWriter, req *http.Request
 		Issuer:    "InvoiceLLM",
 		IssuedAt:  jwt.NewNumericDate(time.Now()),
 		ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Hour * 24)),
-		Subject:   userRetreived.ID.String(),
+		Subject:   userRetreived.ID.Hex(),
 	})
 
 	signedJwtTokenString, err := jwtToken.SignedString([]byte(apiConfig.jwtSecret))
