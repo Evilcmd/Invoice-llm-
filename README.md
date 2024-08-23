@@ -1,5 +1,4 @@
 # InvoiceLLM Backend
-## Swipe Hiring Challenge
 
 This is the backend for the website where you can upload an invoice and get customer details, product details and total amount in json format. You can also choose to store the invoices and retrieve it, must be logged in to access these features.
 
